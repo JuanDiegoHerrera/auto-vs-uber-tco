@@ -47,7 +47,12 @@ flota = [
     # --- Históricos de alta liquidez ---
     {"marca": "volkswagen", "modelo": "gol-trend", "display": "Gol", "inicio": 2012, "fin": 2022},
     {"marca": "ford", "modelo": "ecosport", "display": "EcoSport", "inicio": 2010, "fin": 2012},
-    {"marca": "ford", "modelo": "ecosport-kinetic-design-attraction", "display": "EcoSport", "inicio": 2013, "fin": 2021}
+    {"marca": "ford", "modelo": "ecosport-kinetic-design-attraction", "display": "EcoSport", "inicio": 2013, "fin": 2021},
+
+    # --- Segmento Premium / Lujo ---
+    {"marca": "mercedes-benz", "modelo": "glc-300", "display": "GLC 300", "inicio": 2016, "fin": anio_actual},
+    {"marca": "audi", "modelo": "q-5", "display": "Q5", "inicio": 2010, "fin": anio_actual},
+    {"marca": "bmw", "modelo": "x3", "display": "X3", "inicio": 2010, "fin": anio_actual}
 ]
 
 # 3. Bucle Principal de Extracción
