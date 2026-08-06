@@ -137,16 +137,26 @@ df_filtrado['Seguro_Disp'] = df_filtrado['Costo_Seguro_Anual'] * factor_pantalla
 df_filtrado['Uso_Disp'] = df_filtrado['Uso_Regular_Anual'] * factor_pantalla
 df_filtrado['Maint_Pesado_Disp'] = df_filtrado['Costo_Mantenimiento_Pesado_Anual'] * factor_pantalla
 
-# --- 5. BUSCADOR DEL MEJOR PERÍODO ---
+# --- 5. FILTRO EXCLUSIVO PARA GRÁFICOS Y MEJOR PERÍODO ---
+# Obtenemos la versión más representativa (la que tiene más años en la base) para que arranque por defecto
+version_default = df_filtrado['Version'].value_counts().idxmax()
+
+st.markdown("---")
+version_graficos = st.selectbox("🎯 Versión para Visualización Gráfica:", df_filtrado['Version'].unique(), index=list(df_filtrado['Version'].unique()).index(version_default), help="Elegí la versión específica que querés ver en la curva de depreciación y el análisis de TCO.")
+
+# Aislamos los datos de esa única versión para que el gráfico sea una sola línea perfecta
+df_graficos = df_filtrado[df_filtrado['Version'] == version_graficos].copy()
+
+# Buscador del mejor período (ahora ejecutado sobre df_graficos)
 mejor_periodo = None
 min_dep_acumulada_pct = float('inf')
 
-for i, row in df_filtrado.iterrows():
+for i, row in df_graficos.iterrows():
     año_inicio = row['Año']
     año_fin = año_inicio - 3
-    if año_fin in df_filtrado['Año'].values:
+    if año_fin in df_graficos['Año'].values:
         precio_inicio = row['Precio_USD']
-        precio_fin = df_filtrado[df_filtrado['Año'] == año_fin]['Precio_USD'].values[0]
+        precio_fin = df_graficos[df_graficos['Año'] == año_fin]['Precio_USD'].values[0]
         dep_pct = ((precio_inicio - precio_fin) / precio_inicio) * 100
         if dep_pct < min_dep_acumulada_pct:
             min_dep_acumulada_pct = dep_pct
@@ -159,7 +169,7 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("Curva de Valor Patrimonial", help="Los precios representan los valores de referencia del mercado automotor para unidades usadas en estado estándar. Fuente base: Cámara del Comercio Automotor (CCA).")
 
-    fig1 = px.line(df_filtrado, x='Año', y='Precio_Disp', markers=True, custom_data=['Perdida_Disp'])
+    fig1 = px.line(df_graficos, x='Año', y='Precio_Disp', markers=True, custom_data=['Perdida_Disp'])
     fig1.update_traces(
         line=dict(color='#1f77b4', width=3), marker=dict(size=8),
         hovertemplate=f"<b>Año: %{{x}}</b><br>Precio: {signo} %{{y:,.0f}}<br>Pérdida próximo año: {signo} %{{customdata[0]:,.0f}}<extra></extra>"
@@ -173,44 +183,52 @@ with col1:
 with col2:
     st.subheader("Análisis de Período de Retención", help="Mide la destrucción porcentual del capital inmovilizado. La Tasa Marginal Anual se calcula dividiendo la pérdida proyectada para el año siguiente sobre el precio de mercado actual del vehículo.")
 
-    min_yr = int(df_filtrado['Año'].min())
-    max_yr = int(df_filtrado['Año'].max())
-    rango_seleccionado = st.slider("Seleccioná el período de retención a analizar:", min_value=min_yr, max_value=max_yr, value=(max_yr - 4, max_yr))
-    año_venta, año_compra = rango_seleccionado
-    anios_retencion = año_compra - año_venta
-
-    if anios_retencion > 0:
-        precio_compra = df_filtrado[df_filtrado['Año'] == año_compra]['Precio_USD'].values[0]
-        precio_venta = df_filtrado[df_filtrado['Año'] == año_venta]['Precio_USD'].values[0]
-        dep_acum_usd = precio_compra - precio_venta
-        dep_acum_disp = dep_acum_usd * factor_pantalla
-        dep_acum_pct = (dep_acum_usd / precio_compra) * 100
-        promedio_anual_pct = dep_acum_pct / anios_retencion
+    min_yr = int(df_graficos['Año'].min())
+    max_yr = int(df_graficos['Año'].max())
+    
+    # Validación de seguridad por si una versión tiene un solo año histórico
+    if min_yr == max_yr:
+        st.warning("⚠️ Esta versión solo tiene 1 año de registro. No se puede analizar el período de retención.")
     else:
-        dep_acum_disp = 0; dep_acum_pct = 0; promedio_anual_pct = 0
+        # Control para no pasarse del límite de años disponibles
+        rango_max_posible = min(4, max_yr - min_yr)
+        rango_seleccionado = st.slider("Seleccioná el período de retención a analizar:", min_value=min_yr, max_value=max_yr, value=(max_yr - rango_max_posible, max_yr))
+        año_venta, año_compra = rango_seleccionado
+        anios_retencion = año_compra - año_venta
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Años de Retención", f"{anios_retencion} años")
-    m2.metric("Depreciación Acumulada", f"{dep_acum_pct:.1f}%", f"- {signo} {dep_acum_disp:,.0f}", delta_color="inverse")
-    m3.metric("Promedio Anual", f"{promedio_anual_pct:.1f}% / año")
+        if anios_retencion > 0:
+            precio_compra = df_graficos[df_graficos['Año'] == año_compra]['Precio_USD'].values[0]
+            precio_venta = df_graficos[df_graficos['Año'] == año_venta]['Precio_USD'].values[0]
+            dep_acum_usd = precio_compra - precio_venta
+            dep_acum_disp = dep_acum_usd * factor_pantalla
+            dep_acum_pct = (dep_acum_usd / precio_compra) * 100
+            promedio_anual_pct = dep_acum_pct / anios_retencion
+        else:
+            dep_acum_disp = 0; dep_acum_pct = 0; promedio_anual_pct = 0
 
-    df_tasas = df_filtrado.dropna(subset=['Tasa_Depreciacion_Pct']).copy()
-    df_tasas['Color'] = df_tasas['Año'].apply(lambda x: '#ff7f0e' if año_venta <= x <= año_compra else '#d3d3d3')
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Años de Retención", f"{anios_retencion} años")
+        m2.metric("Depreciación Acumulada", f"{dep_acum_pct:.1f}%", f"- {signo} {dep_acum_disp:,.0f}", delta_color="inverse")
+        m3.metric("Promedio Anual", f"{promedio_anual_pct:.1f}% / año")
 
-    fig2 = go.Figure()
-    fig2.add_trace(go.Bar(
-        x=df_tasas['Año'], y=df_tasas['Tasa_Depreciacion_Pct'],
-        marker_color=df_tasas['Color'], marker_line_color='black', marker_line_width=1,
-        customdata=df_tasas[['Precio_Disp', 'Perdida_Disp']],
-        hovertemplate=f"<b>Año: %{{x}}</b><br>Pérdida Marginal: %{{y:.1f}}%<br>{signo} %{{customdata[1]:,.0f}}<extra></extra>"
-    ))
+    df_tasas = df_graficos.dropna(subset=['Tasa_Depreciacion_Pct']).copy()
+    if not df_tasas.empty and 'año_venta' in locals():
+        df_tasas['Color'] = df_tasas['Año'].apply(lambda x: '#ff7f0e' if año_venta <= x <= año_compra else '#d3d3d3')
 
-    fig2.update_layout(
-        xaxis_title="<b>Año de Fabricación</b>", yaxis_title="<b>Depreciación Marginal (%)</b>",
-        font=dict(size=14), xaxis=dict(autorange="reversed", type='category'),
-        showlegend=False, height=250, margin=dict(t=30, b=0)
-    )
-    st.plotly_chart(fig2, use_container_width=True)
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(
+            x=df_tasas['Año'], y=df_tasas['Tasa_Depreciacion_Pct'],
+            marker_color=df_tasas['Color'], marker_line_color='black', marker_line_width=1,
+            customdata=df_tasas[['Precio_Disp', 'Perdida_Disp']],
+            hovertemplate=f"<b>Año: %{{x}}</b><br>Pérdida Marginal: %{{y:.1f}}%<br>{signo} %{{customdata[1]:,.0f}}<extra></extra>"
+        ))
+
+        fig2.update_layout(
+            xaxis_title="<b>Año de Fabricación</b>", yaxis_title="<b>Depreciación Marginal (%)</b>",
+            font=dict(size=14), xaxis=dict(autorange="reversed", type='category'),
+            showlegend=False, height=250, margin=dict(t=30, b=0)
+        )
+        st.plotly_chart(fig2, use_container_width=True)
 
     if mejor_periodo:
         st.success(f"🏆 **El mejor período histórico de 3 años:** Comprar modelo **{mejor_periodo[0]}** y retener hasta que alcance la antigüedad del **{mejor_periodo[1]}**. La pérdida total de capital es de solo **{min_dep_acumulada_pct:.1f}%**.")
@@ -223,35 +241,35 @@ st.subheader(f"Estructura del TCO Anualizado", help="TCO (Total Cost of Ownershi
 col3, col4 = st.columns([2, 1])
 
 with col3:
-    df_marginal = df_filtrado.dropna(subset=['Perdida_Anual_USD'])
+    df_marginal = df_graficos.dropna(subset=['Perdida_Anual_USD'])
     fig3 = go.Figure()
-    fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Perdida_Disp'], name='Depreciación (CAPEX)', marker_color='#d62728', hovertemplate=f"<b>Depreciación:</b> {signo} %{{y:,.0f}}<extra></extra>"))
-    fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Seguro_Disp'], name='Seguro', marker_color='#1f77b4', hovertemplate=f"<b>Seguro:</b> {signo} %{{y:,.0f}}<extra></extra>"))
-    fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Patente_Disp'], name=f'Patente', marker_color='#2ca02c', hovertemplate=f"<b>Patente:</b> {signo} %{{y:,.0f}}<extra></extra>"))
-    fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Uso_Disp'], name='Nafta+Service+Cochera', marker_color='#9467bd', hovertemplate=f"<b>Uso Regular:</b> {signo} %{{y:,.0f}}<extra></extra>"))
-    fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Maint_Pesado_Disp'], name='Amort. Pesada', marker_color='#bcbd22', hovertemplate=f"<b>Mant. Pesado:</b> {signo} %{{y:,.0f}}<extra></extra>"))
+    
+    if not df_marginal.empty:
+        fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Perdida_Disp'], name='Depreciación (CAPEX)', marker_color='#d62728', hovertemplate=f"<b>Depreciación:</b> {signo} %{{y:,.0f}}<extra></extra>"))
+        fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Seguro_Disp'], name='Seguro', marker_color='#1f77b4', hovertemplate=f"<b>Seguro:</b> {signo} %{{y:,.0f}}<extra></extra>"))
+        fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Patente_Disp'], name=f'Patente', marker_color='#2ca02c', hovertemplate=f"<b>Patente:</b> {signo} %{{y:,.0f}}<extra></extra>"))
+        fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Uso_Disp'], name='Nafta+Service+Cochera', marker_color='#9467bd', hovertemplate=f"<b>Uso Regular:</b> {signo} %{{y:,.0f}}<extra></extra>"))
+        fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Maint_Pesado_Disp'], name='Amort. Pesada', marker_color='#bcbd22', hovertemplate=f"<b>Mant. Pesado:</b> {signo} %{{y:,.0f}}<extra></extra>"))
 
-    fig3.update_layout(
-        barmode='stack', xaxis_title="<b>Año de Fabricación</b>", yaxis_title=f"<b>Gasto Total Anual ({lbl})</b>",
-        font=dict(size=14), xaxis=dict(autorange="reversed", type='category'),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    st.plotly_chart(fig3, use_container_width=True)
+        fig3.update_layout(
+            barmode='stack', xaxis_title="<b>Año de Fabricación</b>", yaxis_title=f"<b>Gasto Total Anual ({lbl})</b>",
+            font=dict(size=14), xaxis=dict(autorange="reversed", type='category'),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig3, use_container_width=True)
 
 with col4:
     costo_uber_anual_disp = km_anuales * precio_uber_km * factor_pantalla
     st.metric(label="📊 Alternativa Dinámica (Uber/Cabify)", value=f"{signo} {costo_uber_anual_disp:,.0f}", help="Costo de oportunidad calculado multiplicando la tarifa plana ingresada por los kilómetros anuales del usuario.")
 
-    tco_promedio_auto_disp = df_marginal['TCO_Total_Anual'].mean() * factor_pantalla
-    st.metric(label="🚗 TCO Promedio Flota", value=f"{signo} {tco_promedio_auto_disp:,.0f}", help="Promedio del Costo Total Anual de todas las añadas disponibles del modelo analizado.")
+    if not df_marginal.empty:
+        tco_promedio_auto_disp = df_marginal['TCO_Total_Anual'].mean() * factor_pantalla
+        st.metric(label="🚗 TCO Promedio Flota", value=f"{signo} {tco_promedio_auto_disp:,.0f}", help="Promedio del Costo Total Anual de todas las añadas disponibles de la versión analizada.")
 
-    if tco_promedio_auto_disp > costo_uber_anual_disp:
-        st.error("❌ Conviene usar apps de movilidad para este kilometraje.")
-    else:
-        st.success("✅ Conviene comprar (TCO inferior).")
-
-st.markdown("---")
-
+        if tco_promedio_auto_disp > costo_uber_anual_disp:
+            st.error("❌ Conviene usar apps de movilidad para este kilometraje.")
+        else:
+            st.success("✅ Conviene comprar (TCO inferior).")
 # --- 8. ANEXO METODOLÓGICO Y TABLA DINÁMICA AÑO A AÑO ---
 with st.expander("📚 Notas Metodológicas y Especificaciones de Flota (Leer antes de analizar)"):
     st.markdown(f"""
