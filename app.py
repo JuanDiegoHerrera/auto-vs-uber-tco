@@ -270,7 +270,9 @@ with col4:
             st.error("❌ Conviene usar apps de movilidad para este kilometraje.")
         else:
             st.success("✅ Conviene comprar (TCO inferior).")
-# --- 8. ANEXO METODOLÓGICO Y TABLA DINÁMICA AÑO A AÑO ---
+
+
+# --- 8. ANEXO METODOLÓGICO Y MATRIZ DINÁMICA CRUZADA ---
 with st.expander("📚 Notas Metodológicas y Especificaciones de Flota (Leer antes de analizar)"):
     st.markdown(f"""
     **Origen de los Datos & Conversión Dinámica:**
@@ -286,8 +288,8 @@ with st.expander("📚 Notas Metodológicas y Especificaciones de Flota (Leer an
     * **Utilitarios e Históricos:** Kangoo, VW Gol, EcoSport.
     """)
 
-st.subheader("Matriz de Exploración Anual (Personalizable)")
-st.markdown("Seleccioná la versión específica de cada año para evaluar su evolución financiera. Los datos se recalculan en tiempo real.")
+st.subheader("Matriz de Exploración Anual Dinámica")
+st.markdown("⚠️ **Modo Libre:** Evaluá la evolución financiera combinando distintas versiones. El sistema calculará la destrucción de valor restando el precio de la variante elegida en el año actual contra la variante seleccionada en el año anterior.")
 
 # 1. Armamos el encabezado de nuestra tabla fabricada a medida
 col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([1, 4, 2, 2, 2])
@@ -298,47 +300,66 @@ col_h4.markdown(f"**Pérdida ({lbl})**")
 col_h5.markdown("**Depreciación (%)**")
 st.markdown("---")
 
-# 2. Extraemos los años únicos disponibles para este modelo, ordenados de más nuevo a más viejo
 años_disponibles = sorted(df_filtrado['Año'].unique(), reverse=True)
 
-# 3. Bucle para construir cada fila dinámicamente
+# 2. Leemos la memoria de Streamlit para saber qué eligió el usuario en todos los años antes de calcular
+versiones_elegidas = {}
 for año in años_disponibles:
-    # Aislamos los datos de ese año en particular
+    key_select = f"matriz_{año}"
+    opciones_año = df_filtrado[df_filtrado['Año'] == año]['Version'].unique()
+    if key_select in st.session_state:
+        versiones_elegidas[año] = st.session_state[key_select]
+    else:
+        versiones_elegidas[año] = opciones_año[0]
+
+# 3. Bucle de renderizado y cálculo cruzado
+for i, año in enumerate(años_disponibles):
     df_año = df_filtrado[df_filtrado['Año'] == año]
     versiones_año = df_año['Version'].unique()
     
-    # Creamos las 5 columnas de la fila
     c1, c2, c3, c4, c5 = st.columns([1, 4, 2, 2, 2])
     
     with c1:
         st.write(f"**{año}**")
         
     with c2:
-        # Selector clave: Usamos f"select_{año}" en el key para que Streamlit sepa que cada desplegable es independiente
+        # Usamos una key única ('matriz_2025') para que no interfiera con el gráfico superior
         version_elegida = st.selectbox(
             "Versión", 
             options=versiones_año, 
             label_visibility="collapsed", 
-            key=f"select_{año}"
+            key=f"matriz_{año}"
         )
+        versiones_elegidas[año] = version_elegida
         
-    # Extraemos la fila exacta de datos según la versión que el usuario dejó en el selector
+    # Extraemos el precio del año actual seleccionado
     datos_fila = df_año[df_año['Version'] == version_elegida].iloc[0]
+    precio_actual = datos_fila['Precio_Disp']
     
     with c3:
-        st.write(f"{signo} {datos_fila['Precio_Disp']:,.0f}")
+        st.write(f"{signo} {precio_actual:,.0f}")
         
     with c4:
-        # Validación para evitar errores si es el año más antiguo y no tiene contra qué calcular pérdida
-        if pd.isna(datos_fila['Perdida_Disp']):
-            st.write("-")
-        else:
-            st.write(f"{signo} {datos_fila['Perdida_Disp']:,.0f}")
+        # Verificamos si existe un año más viejo en la base para restarle
+        if i + 1 < len(años_disponibles):
+            año_anterior = años_disponibles[i+1]
+            version_anterior = versiones_elegidas[año_anterior]
             
-    with c5:
-        if pd.isna(datos_fila['Tasa_Depreciacion_Pct']):
-            st.write("-")
-        else:
-            st.write(f"{datos_fila['Tasa_Depreciacion_Pct']:.1f}%")
+            # Buscamos el precio de la versión elegida en ese año anterior
+            datos_ant = df_filtrado[(df_filtrado['Año'] == año_anterior) & (df_filtrado['Version'] == version_anterior)].iloc[0]
+            precio_ant = datos_ant['Precio_Disp']
             
+            # MATEMÁTICA CRUZADA DINÁMICA
+            perdida_cruzada = precio_actual - precio_ant
+            tasa_cruzada = (perdida_cruzada / precio_actual) * 100
+            
+            st.write(f"{signo} {perdida_cruzada:,.0f}")
+            with c5:
+                st.write(f"{tasa_cruzada:.1f}%")
+        else:
+            # Fin de la serie temporal
+            st.write("-")
+            with c5:
+                st.write("-")
+                
 st.markdown("---")
