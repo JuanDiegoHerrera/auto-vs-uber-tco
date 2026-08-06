@@ -137,17 +137,18 @@ df_filtrado['Seguro_Disp'] = df_filtrado['Costo_Seguro_Anual'] * factor_pantalla
 df_filtrado['Uso_Disp'] = df_filtrado['Uso_Regular_Anual'] * factor_pantalla
 df_filtrado['Maint_Pesado_Disp'] = df_filtrado['Costo_Mantenimiento_Pesado_Anual'] * factor_pantalla
 
+
 # --- 5. FILTRO EXCLUSIVO PARA GRÁFICOS Y MEJOR PERÍODO ---
-# Obtenemos la versión más representativa (la que tiene más años en la base) para que arranque por defecto
+# Obtenemos la versión más representativa para que el gráfico arranque por defecto
 version_default = df_filtrado['Version'].value_counts().idxmax()
 
 st.markdown("---")
-version_graficos = st.selectbox("🎯 Versión para Visualización Gráfica:", df_filtrado['Version'].unique(), index=list(df_filtrado['Version'].unique()).index(version_default), help="Elegí la versión específica que querés ver en la curva de depreciación y el análisis de TCO.")
+version_graficos = st.selectbox("🎯 Versión para Visualización Gráfica:", df_filtrado['Version'].unique(), index=list(df_filtrado['Version'].unique()).index(version_default), help="Elegí la versión específica que querés ver en la curva de depreciación.")
 
-# Aislamos los datos de esa única versión para que el gráfico sea una sola línea perfecta
+# Aislamos los datos de esa única versión para limpiar el gráfico
 df_graficos = df_filtrado[df_filtrado['Version'] == version_graficos].copy()
 
-# Buscador del mejor período (ahora ejecutado sobre df_graficos)
+# Buscador del mejor período
 mejor_periodo = None
 min_dep_acumulada_pct = float('inf')
 
@@ -176,21 +177,22 @@ with col1:
     )
     fig1.update_layout(
         xaxis_title="<b>Año de Fabricación</b>", yaxis_title=f"<b>Precio ({lbl})</b>", font=dict(size=14),
-        hovermode="x unified", xaxis=dict(autorange="reversed", showgrid=True), yaxis=dict(showgrid=True)
+        hovermode="x unified", 
+        # ACÁ ESTÁ LA MAGIA: type='category' elimina los años con decimales
+        xaxis=dict(autorange="reversed", showgrid=True, type='category'), 
+        yaxis=dict(showgrid=True)
     )
     st.plotly_chart(fig1, use_container_width=True)
 
 with col2:
-    st.subheader("Análisis de Período de Retención", help="Mide la destrucción porcentual del capital inmovilizado. La Tasa Marginal Anual se calcula dividiendo la pérdida proyectada para el año siguiente sobre el precio de mercado actual del vehículo.")
+    st.subheader("Análisis de Período de Retención", help="Mide la destrucción porcentual del capital inmovilizado.")
 
     min_yr = int(df_graficos['Año'].min())
     max_yr = int(df_graficos['Año'].max())
     
-    # Validación de seguridad por si una versión tiene un solo año histórico
     if min_yr == max_yr:
         st.warning("⚠️ Esta versión solo tiene 1 año de registro. No se puede analizar el período de retención.")
     else:
-        # Control para no pasarse del límite de años disponibles
         rango_max_posible = min(4, max_yr - min_yr)
         rango_seleccionado = st.slider("Seleccioná el período de retención a analizar:", min_value=min_yr, max_value=max_yr, value=(max_yr - rango_max_posible, max_yr))
         año_venta, año_compra = rango_seleccionado
@@ -225,7 +227,9 @@ with col2:
 
         fig2.update_layout(
             xaxis_title="<b>Año de Fabricación</b>", yaxis_title="<b>Depreciación Marginal (%)</b>",
-            font=dict(size=14), xaxis=dict(autorange="reversed", type='category'),
+            font=dict(size=14), 
+            # Acá también aseguramos que sea categoría
+            xaxis=dict(autorange="reversed", type='category'),
             showlegend=False, height=250, margin=dict(t=30, b=0)
         )
         st.plotly_chart(fig2, use_container_width=True)
@@ -233,7 +237,6 @@ with col2:
     if mejor_periodo:
         st.success(f"🏆 **El mejor período histórico de 3 años:** Comprar modelo **{mejor_periodo[0]}** y retener hasta que alcance la antigüedad del **{mejor_periodo[1]}**. La pérdida total de capital es de solo **{min_dep_acumulada_pct:.1f}%**.")
 
-st.markdown("---")
 
 # --- 7. GRÁFICO APILADO (TCO) ---
 st.subheader(f"Estructura del TCO Anualizado", help="TCO (Total Cost of Ownership). Suma el CAPEX (Depreciación patrimonial) más el OPEX (Gastos operativos). El modelo asume un incremento compuesto del 5% anual en los costos de mantenimiento para penalizar la retención de activos envejecidos.")
