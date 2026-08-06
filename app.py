@@ -254,16 +254,17 @@ st.markdown("---")
 with st.expander("📚 Notas Metodológicas y Especificaciones de Flota (Leer antes de analizar)"):
     st.markdown(f"""
     **Origen de los Datos & Conversión Dinámica:**
-    Los precios base en pesos originales fueron obtenidos de portales oficiales alineados con las tablas de la **Cámara del Comercio Automotor (CCA)**.
+    Los precios base en pesos originales son extraídos y actualizados mensualmente de forma automática desde la guía oficial de **Autocosmos**.
     Al seleccionar visualización en Dólares, el sistema realiza la conversión en tiempo real dividiendo el precio por la cotización del Dólar MEP extraída en vivo desde DolarAPI.
 
-    **Flota de Referencia Analizada (Versiones Específicas):**
-    * **Toyota Hilux:** Versión 2.8 SRV / SRX 4x4 (Diésel).
-    * **Toyota Corolla Cross:** Versión 1.8 XEI / SEG HEV (Motorización Híbrida).
-    * **Mercedes-Benz GLC 300:** Versión 2.0 4MATIC AMG Line (MHEV).
-    * **Chevrolet Tracker:** Versión 1.2T Premier / 1.8 LTZ.
+    **Flota de Referencia Analizada (Top 20 Argentina):**
+    El modelo evalúa más de 2700 registros históricos correspondientes a los vehículos de mayor liquidez del mercado:
+    * **Pick-ups:** Toyota Hilux, VW Amarok, Ford Ranger, Nissan Frontier.
+    * **SUVs:** Corolla Cross, Tracker, Taos, Renegade, HR-V, 2008.
+    * **Pasajeros:** Cronos, 208, Yaris, Polo, Corolla, Cruze, Sandero.
+    * **Premium y Lujo:** Mercedes-Benz GLC 300, Audi Q5, BMW X3.
+    * **Utilitarios e Históricos:** Kangoo, VW Gol, EcoSport.
     """)
-
 df_tabla = df_filtrado.copy()
 df_tabla['TCO_Total_Disp'] = df_tabla['TCO_Total_Anual'] * factor_pantalla
 
