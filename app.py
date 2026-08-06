@@ -83,7 +83,8 @@ st.success(f"🏆 **Analizando Flota:** {modelo_elegido} - Vehículo de Referenc
 
 
 # --- 4. MOTOR DE CÁLCULO DINÁMICO ---
-df_filtrado = df[df['Modelo'] == modelo_elegido].sort_values('Año', ascending=False).copy()
+# Ordenamos por Versión y luego por Año para aislar el cálculo matemático
+df_filtrado = df[df['Modelo'] == modelo_elegido].sort_values(['Version', 'Año'], ascending=[True, False]).copy()
 
 df_filtrado['Precio_USD'] = df_filtrado['Precio'] / tipo_cambio
 
@@ -107,7 +108,9 @@ def calcular_patente_dinamica(row, prov):
 
 df_filtrado['Costo_Patente_Anual'] = df_filtrado.apply(lambda r: calcular_patente_dinamica(r, provincia), axis=1)
 df_filtrado['Costo_Seguro_Anual'] = df_filtrado['Precio_USD'] * 0.035
-df_filtrado['Perdida_Anual_USD'] = df_filtrado['Precio_USD'] - df_filtrado['Precio_USD'].shift(-1)
+
+# Cálculo aislado: diff(-1) restará solo contra el año anterior de la MISMA versión
+df_filtrado['Perdida_Anual_USD'] = df_filtrado.groupby('Version')['Precio_USD'].diff(periods=-1)
 df_filtrado['Tasa_Depreciacion_Pct'] = (df_filtrado['Perdida_Anual_USD'] / df_filtrado['Precio_USD']) * 100
 
 df_filtrado['Costo_Combustible_Anual'] = (km_anuales / 100) * 9 * precio_litro
@@ -133,7 +136,6 @@ df_filtrado['Patente_Disp'] = df_filtrado['Costo_Patente_Anual'] * factor_pantal
 df_filtrado['Seguro_Disp'] = df_filtrado['Costo_Seguro_Anual'] * factor_pantalla
 df_filtrado['Uso_Disp'] = df_filtrado['Uso_Regular_Anual'] * factor_pantalla
 df_filtrado['Maint_Pesado_Disp'] = df_filtrado['Costo_Mantenimiento_Pesado_Anual'] * factor_pantalla
-
 
 # --- 5. BUSCADOR DEL MEJOR PERÍODO ---
 mejor_periodo = None
@@ -250,7 +252,7 @@ with col4:
 
 st.markdown("---")
 
-# --- 8. ANEXO METODOLÓGICO Y TABLA DINÁMICA DE VERSIONES ---
+# --- 8. ANEXO METODOLÓGICO Y TABLA DINÁMICA AÑO A AÑO ---
 with st.expander("📚 Notas Metodológicas y Especificaciones de Flota (Leer antes de analizar)"):
     st.markdown(f"""
     **Origen de los Datos & Conversión Dinámica:**
@@ -266,25 +268,59 @@ with st.expander("📚 Notas Metodológicas y Especificaciones de Flota (Leer an
     * **Utilitarios e Históricos:** Kangoo, VW Gol, EcoSport.
     """)
 
-st.subheader("Matriz de Datos Crudos y Selector de Versiones")
+st.subheader("Matriz de Exploración Anual (Personalizable)")
+st.markdown("Seleccioná la versión específica de cada año para evaluar su evolución financiera. Los datos se recalculan en tiempo real.")
 
-# 1. Obtenemos todas las versiones únicas disponibles para el modelo seleccionado en todo el historial
-todas_las_versiones = df[df['Modelo'] == modelo_elegido]['Version'].unique()
+# 1. Armamos el encabezado de nuestra tabla fabricada a medida
+col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([1, 4, 2, 2, 2])
+col_h1.markdown("**Año**")
+col_h2.markdown("**Versión**")
+col_h3.markdown(f"**Precio ({lbl})**")
+col_h4.markdown(f"**Pérdida ({lbl})**")
+col_h5.markdown("**Depreciación (%)**")
+st.markdown("---")
 
-# 2. Creamos un selectbox para que el usuario elija qué versión quiere inspeccionar en detalle en la tabla
-version_tabla_elegida = st.selectbox("Seleccioná la versión específica para auditar en la tabla:", todas_las_versiones)
+# 2. Extraemos los años únicos disponibles para este modelo, ordenados de más nuevo a más viejo
+años_disponibles = sorted(df_filtrado['Año'].unique(), reverse=True)
 
-# 3. Filtramos exclusivamente por esa versión, garantizando una única fila prolija por año
-df_tabla_usuario = df[(df['Modelo'] == modelo_elegido) & (df['Version'] == version_tabla_elegida)].sort_values('Año', ascending=False).copy()
-
-# 4. Calculamos las conversiones de pantalla
-df_tabla_usuario['TCO_Total_Disp'] = df_tabla_usuario['TCO_Total_Anual'] * factor_pantalla
-df_tabla_usuario['Precio_Disp'] = df_tabla_usuario['Precio_USD'] * factor_pantalla
-df_tabla_usuario['Perdida_Disp'] = df_tabla_usuario['Perdida_Anual_USD'] * factor_pantalla
-
-st.dataframe(df_tabla_usuario[['Año', 'Version', 'TCO_Total_Disp', 'Precio_Disp', 'Perdida_Disp', 'Tasa_Depreciacion_Pct']].rename(columns={
-    'TCO_Total_Disp': f'TCO Total Anual ({lbl})',
-    'Precio_Disp': f'Precio ({lbl})',
-    'Perdida_Disp': f'Pérdida Anual ({lbl})',
-    'Tasa_Depreciacion_Pct': 'Depreciación Marginal (%)'
-}), use_container_width=True)
+# 3. Bucle para construir cada fila dinámicamente
+for año in años_disponibles:
+    # Aislamos los datos de ese año en particular
+    df_año = df_filtrado[df_filtrado['Año'] == año]
+    versiones_año = df_año['Version'].unique()
+    
+    # Creamos las 5 columnas de la fila
+    c1, c2, c3, c4, c5 = st.columns([1, 4, 2, 2, 2])
+    
+    with c1:
+        st.write(f"**{año}**")
+        
+    with c2:
+        # Selector clave: Usamos f"select_{año}" en el key para que Streamlit sepa que cada desplegable es independiente
+        version_elegida = st.selectbox(
+            "Versión", 
+            options=versiones_año, 
+            label_visibility="collapsed", 
+            key=f"select_{año}"
+        )
+        
+    # Extraemos la fila exacta de datos según la versión que el usuario dejó en el selector
+    datos_fila = df_año[df_año['Version'] == version_elegida].iloc[0]
+    
+    with c3:
+        st.write(f"{signo} {datos_fila['Precio_Disp']:,.0f}")
+        
+    with c4:
+        # Validación para evitar errores si es el año más antiguo y no tiene contra qué calcular pérdida
+        if pd.isna(datos_fila['Perdida_Disp']):
+            st.write("-")
+        else:
+            st.write(f"{signo} {datos_fila['Perdida_Disp']:,.0f}")
+            
+    with c5:
+        if pd.isna(datos_fila['Tasa_Depreciacion_Pct']):
+            st.write("-")
+        else:
+            st.write(f"{datos_fila['Tasa_Depreciacion_Pct']:.1f}%")
+            
+st.markdown("---")
