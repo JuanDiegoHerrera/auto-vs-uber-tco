@@ -63,21 +63,33 @@ $$\text{Costo Anual Uber} = \text{Kilómetros Anuales} \times \text{Precio Uber 
 
 ## 📊 Stack Tecnológico Utilizado
 
-- **Python 3.x:** Lenguaje principal de procesamiento de datos y backend.
-- **Streamlit:** Framework para el diseño de la interfaz de usuario y despliegue de la web app.
-- **Plotly Express & Graph Objects:** Biblioteca gráfica para la creación de charts interactivos, mapas de capas apiladas y tooltips dinámicos.
-- **Pandas & NumPy:** Motores analíticos para la reindexación de series, manipulación de matrices, interpolaciones lineales y transformaciones de tipo de cambio.
-- **Requests:** Conectividad con endpoints de API externas para el consumo de datos financieros en tiempo real.
-
+* **Python 3.x:** Lenguaje principal de procesamiento de datos, scraping y backend.
+* **Streamlit:** Framework para el diseño de la interfaz de usuario y despliegue de la web app.
+* **GitHub Actions:** Orquestación de CI/CD para la automatización mensual del pipeline de datos (*cron jobs*).
+* **Plotly Express & Graph Objects:** Biblioteca gráfica para la creación de charts interactivos, mapas de capas apiladas y tooltips dinámicos.
+* **Pandas & NumPy:** Motores analíticos para la extracción HTML, reindexación de series, limpieza de datos y transformaciones de tipo de cambio.
+* **Requests:** Conectividad con endpoints de API externas (DolarAPI) y ejecución de peticiones HTTP para el web scraping.
 ---
+## 📋 Especificaciones de la Flota de Referencia
 
-## 📋 Especificaciones de la Flota de Referencia (Datos de Mercado de la CCA)
-Para asegurar la consistencia y comparabilidad del modelo a lo largo de la serie temporal (2016-2025), se seleccionaron las versiones insignia de cuatro segmentos clave del mercado que representan valores de referencia estables alineados con la **Cámara del Comercio Automotor (CCA)**:
+Para asegurar la consistencia, liquidez y comparabilidad del modelo a lo largo de la serie temporal (2010 - Actualidad), el pipeline extrae los datos del **Top 20 de vehículos más patentados de Argentina**, abarcando cuatro segmentos clave del mercado:
 
-* **Segmento Pick-up Mediana:** *Toyota Hilux* (Versiones 2.8 SRV / SRX 4x4 Diésel) - Benchmark del sector utilitario y agroindustrial de alta retención de valor.
-* **Segmento SUV C:** *Toyota Corolla Cross* (Versiones 1.8 XEI / SEG HEV) - Referencia en movilidad familiar urbana y motorización híbrida.
-* **Segmento SUV B:** *Chevrolet Tracker* (Versiones 1.2T Premier / 1.8 LTZ) - Referencia regional de entrada de gama urbana.
-* **Segmento SUV D Premium:** *Mercedes-Benz GLC 300* (Versión 2.0 4MATIC AMG Line) - Referencia de alta gama con tecnología Micro-Híbrida (MHEV).
+* **Segmento Pick-ups (Alta retención de valor):** Toyota Hilux, Volkswagen Amarok, Ford Ranger, Nissan Frontier.
+* **Segmento SUVs y Crossovers:** Toyota Corolla Cross, Chevrolet Tracker, Volkswagen Taos, Jeep Renegade, Honda HR-V, Peugeot 2008.
+* **Segmento Autos de Pasajeros:** Fiat Cronos, Peugeot 208, Toyota Yaris, Volkswagen Polo, Toyota Corolla, Chevrolet Cruze, Renault Sandero.
+* **Segmento Utilitarios y Vehículos Históricos (Alta liquidez en usados):** Renault Kangoo, Volkswagen Gol, Ford EcoSport.
+* **Segmento Premium y Alta Gama (Tecnología y Lujo):** Mercedes-Benz GLC 300, Audi Q5, BMW X3.
+---
+## ⚙️ Arquitectura de Datos y Automatización (Data Pipeline)
+
+Este proyecto cuenta con un motor de datos 100% autónomo construido en Python, diseñado para evitar la obsolescencia de los precios y mantener el rigor analítico del modelo de TCO.
+
+* **Extracción (Web Scraping):** El script `scraper.py` recorre mensualmente la guía de precios oficial de Autocosmos.
+* **Transformación y Limpieza:** El código procesa dinámicamente las inconsistencias de las URLs (ej: denominaciones específicas de pick-ups o versiones descatalogadas) y unifica la información, calculando en tiempo real la variable de antigüedad.
+* **Volumen de Datos:** La base consolida de manera automatizada más de 2700 registros históricos con sus respectivas cotizaciones de mercado.
+* **Automatización en la Nube (CI/CD):** Mediante el uso de **GitHub Actions**, un *cron job* ejecuta la extracción el día 1 de cada mes. 
+* **Despliegue Continuo:** El servidor sobreescribe automáticamente el archivo CSV maestro del repositorio. Esta acción impacta de manera inmediata en la interfaz visual de Streamlit, garantizando que los usuarios siempre operen con los valores de mercado más recientes sin requerir intervención humana.
+
 
 ---
 
