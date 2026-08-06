@@ -77,29 +77,41 @@ else:
 
 st.success(f"🏆 **Analizando Flota:** {modelo_elegido} - Vehículo de Referencia del Mercado")
 
-# --- 4. MOTOR DE CÁLCULO BASE (RESTAURADO) ---
-df_filtrado = df[df['Modelo'] == modelo_elegido].sort_values(['Version', 'Año'], ascending=[True, False]).copy()
-df_filtrado['Precio_USD'] = df_filtrado['Precio'] / tipo_cambio
+# --- 4. MOTOR DE CÁLCULO BASE (ENFOQUE DE PRECIO MEDIO ESTADÍSTICO) ---
+df_modelo = df[df['Modelo'] == modelo_elegido].copy()
 
-def calcular_patente_dinamica(row, prov):
+# Protegemos la lógica de patentes detectando si el auto tiene versiones híbridas
+es_modelo_hibrido = any(kw in modelo_elegido.upper() for kw in ['HEV', 'HYBRID', 'HIBRIDO', 'EQ', 'MHEV'])
+versiones_hibridas = df_modelo['Version'].str.upper().str.contains('HEV|HYBRID|HIBRIDO|EQ|MHEV').any()
+es_hibrido_final = es_modelo_hibrido or versiones_hibridas
+
+# Agrupamos por año y sacamos la mediana (el precio del medio exacto) para limpiar outliers
+df_filtrado = df_modelo.groupby('Año')['Precio'].median().reset_index()
+df_filtrado = df_filtrado.sort_values('Año', ascending=False).reset_index(drop=True)
+
+# Armamos el dataframe genérico a prueba de balas
+df_filtrado['Version'] = f"{modelo_elegido} (Valor Medio de Mercado)"
+df_filtrado['Precio_USD'] = df_filtrado['Precio'] / tipo_cambio
+año_actual = df_filtrado['Año'].max()
+df_filtrado['Antigüedad'] = año_actual - df_filtrado['Año']
+
+def calcular_patente_dinamica_mediana(row, prov, hibrido):
     precio = row['Precio_USD']
     antiguedad = row['Antigüedad']
-    version = str(row['Version']).upper()
     if antiguedad >= 15: return 0
-    es_hibrido = any(kw in version for kw in ['HEV', 'HYBRID', 'HIBRIDO', 'EQ', 'MHEV'])
     if prov == "Entre Ríos":
         alicuota = 0.025
-        if es_hibrido:
+        if hibrido:
             if antiguedad == 0: return 0
             elif antiguedad == 1: return precio * alicuota * 0.50
             elif antiguedad == 2: return precio * alicuota * 0.80
         return precio * alicuota
-    elif prov == "CABA": return 0 if es_hibrido else (precio * 0.040)
+    elif prov == "CABA": return 0 if hibrido else (precio * 0.040)
     elif prov == "Buenos Aires": return precio * 0.045
-    elif prov == "Santa Fe": return 0 if es_hibrido else (precio * 0.020)
+    elif prov == "Santa Fe": return 0 if hibrido else (precio * 0.020)
     else: return precio * 0.022
 
-df_filtrado['Costo_Patente_Anual'] = df_filtrado.apply(lambda r: calcular_patente_dinamica(r, provincia), axis=1)
+df_filtrado['Costo_Patente_Anual'] = df_filtrado.apply(lambda r: calcular_patente_dinamica_mediana(r, provincia, es_hibrido_final), axis=1)
 df_filtrado['Costo_Seguro_Anual'] = df_filtrado['Precio_USD'] * 0.035
 df_filtrado['Costo_Combustible_Anual'] = (km_anuales / 100) * 9 * precio_litro
 df_filtrado['Costo_Service_Anual'] = (km_anuales / 10000) * precio_service
@@ -118,51 +130,21 @@ df_filtrado['Seguro_Disp'] = df_filtrado['Costo_Seguro_Anual'] * factor_pantalla
 df_filtrado['Uso_Disp'] = df_filtrado['Uso_Regular_Anual'] * factor_pantalla
 df_filtrado['Maint_Pesado_Disp'] = df_filtrado['Costo_Mantenimiento_Pesado_Anual'] * factor_pantalla
 
-# --- 5. CONSTRUCCIÓN DE LA CURVA SINTÉTICA (Controlada por la Matriz) ---
-años_disponibles = sorted(df_filtrado['Año'].unique(), reverse=True)
+# --- 5. PREPARACIÓN DE LA CURVA DE GRÁFICOS ---
+df_graficos = df_filtrado.copy()
+df_graficos['Perdida_Disp'] = df_graficos['Precio_Disp'] - df_graficos['Precio_Disp'].shift(-1)
+df_graficos['Perdida_Anual_USD'] = df_graficos['Perdida_Disp'] / factor_pantalla
+df_graficos['Tasa_Depreciacion_Pct'] = (df_graficos['Perdida_Disp'] / df_graficos['Precio_Disp']) * 100
 
-# Leemos las versiones seleccionadas en la matriz
-versiones_elegidas = {}
-for año in años_disponibles:
-    key_select = f"matriz_{año}"
-    opciones_año = df_filtrado[df_filtrado['Año'] == año]['Version'].unique()
-    
-    # CORRECCIÓN CLAVE: Verificamos si la versión guardada en memoria pertenece al modelo actual
-    if key_select in st.session_state and st.session_state[key_select] in opciones_año:
-        versiones_elegidas[año] = st.session_state[key_select]
-    else:
-        # Si cambiamos de auto, se resetea a la primera opción disponible
-        versiones_elegidas[año] = opciones_año[0]
+df_graficos['TCO_Total_Anual'] = (
+    df_graficos['Perdida_Anual_USD'].fillna(0) + 
+    df_graficos['Costo_Patente_Anual'] +
+    df_graficos['Costo_Seguro_Anual'] + 
+    df_graficos['Uso_Regular_Anual'] + 
+    df_graficos['Costo_Mantenimiento_Pesado_Anual']
+)
 
-# Armamos el dataframe dinámico uniendo las filas exactas elegidas
-filas_sinteticas = []
-for año in años_disponibles:
-    version_sel = versiones_elegidas[año]
-    fila = df_filtrado[(df_filtrado['Año'] == año) & (df_filtrado['Version'] == version_sel)].copy()
-    if not fila.empty:
-        filas_sinteticas.append(fila)
-
-if filas_sinteticas:
-    df_graficos = pd.concat(filas_sinteticas)
-else:
-    df_graficos = pd.DataFrame()
-
-# Calculamos la matemática cruzada (Depreciación y Pérdida) directamente sobre la selección
-if not df_graficos.empty:
-    df_graficos['Perdida_Disp'] = df_graficos['Precio_Disp'] - df_graficos['Precio_Disp'].shift(-1)
-    df_graficos['Perdida_Anual_USD'] = df_graficos['Perdida_Disp'] / factor_pantalla
-    df_graficos['Tasa_Depreciacion_Pct'] = (df_graficos['Perdida_Disp'] / df_graficos['Precio_Disp']) * 100
-
-    # Recalculamos el TCO de la curva sintética
-    df_graficos['TCO_Total_Anual'] = (
-        df_graficos['Perdida_Anual_USD'].fillna(0) + 
-        df_graficos['Costo_Patente_Anual'] +
-        df_graficos['Costo_Seguro_Anual'] + 
-        df_graficos['Uso_Regular_Anual'] + 
-        df_graficos['Costo_Mantenimiento_Pesado_Anual']
-    )
-
-# Buscador del mejor período sobre la curva sintética
+# Buscador del mejor período
 mejor_periodo = None
 min_dep_acumulada_pct = float('inf')
 
@@ -176,8 +158,7 @@ if not df_graficos.empty:
             dep_pct = ((precio_inicio - precio_fin) / precio_inicio) * 100
             if dep_pct < min_dep_acumulada_pct:
                 min_dep_acumulada_pct = dep_pct
-                mejor_periodo = (año_inicio, año_fin)
-
+                mejor_periodo = (int(año_inicio), int(año_fin))
 
 # --- 6. VISUALIZACIONES PRINCIPALES ---
 col1, col2 = st.columns(2)
@@ -187,12 +168,12 @@ with col1:
     fig1 = px.line(df_graficos, x='Año', y='Precio_Disp', markers=True, custom_data=['Perdida_Disp'])
     fig1.update_traces(
         line=dict(color='#1f77b4', width=3), marker=dict(size=8),
-        hovertemplate=f"<b>Año: %{{x}}</b><br>Precio: {signo} %{{y:,.0f}}<br>Pérdida cruzada al año ant.: {signo} %{{customdata[0]:,.0f}}<extra></extra>"
+        hovertemplate=f"<b>Año: %{{x}}</b><br>Precio: {signo} %{{y:,.0f}}<br>Pérdida anual: {signo} %{{customdata[0]:,.0f}}<extra></extra>"
     )
     fig1.update_layout(
         xaxis_title="<b>Año de Fabricación</b>", yaxis_title=f"<b>Precio ({lbl})</b>", font=dict(size=14),
         hovermode="x unified", 
-        xaxis=dict(autorange="reversed", showgrid=True, type='category'), # Soluciona el eje invertido y los decimales
+        xaxis=dict(autorange="reversed", showgrid=True, type='category'),
         yaxis=dict(showgrid=True)
     )
     st.plotly_chart(fig1, use_container_width=True)
@@ -249,7 +230,7 @@ with col2:
         st.success(f"🏆 **El mejor período histórico:** Comprar modelo **{mejor_periodo[0]}** y retener hasta el **{mejor_periodo[1]}**.")
 
 # --- 7. GRÁFICO APILADO (TCO) ---
-st.subheader(f"Estructura del TCO Anualizado")
+st.subheader("Estructura del TCO Anualizado")
 col3, col4 = st.columns([2, 1])
 
 with col3:
@@ -283,7 +264,7 @@ with col4:
         else:
             st.success("✅ Conviene comprar (TCO inferior).")
 
-# --- 8. ANEXO METODOLÓGICO Y MATRIZ DINÁMICA CRUZADA ---
+# --- 8. ANEXO METODOLÓGICO Y MATRIZ ---
 with st.expander("📚 Notas Metodológicas y Especificaciones de Flota"):
     st.markdown(f"""
     **Origen de los Datos:** Precios extraídos de **Autocosmos**.
@@ -291,50 +272,40 @@ with st.expander("📚 Notas Metodológicas y Especificaciones de Flota"):
     **Flota Top 20:** Hilux, Amarok, Ranger, Frontier, Corolla Cross, Tracker, Taos, Renegade, HR-V, 2008, Cronos, 208, Yaris, Polo, Corolla, Cruze, Sandero, GLC 300, Q5, X3, Kangoo, Gol, EcoSport.
     """)
 
-st.subheader("Matriz de Exploración Anual Dinámica")
-st.markdown("⚠️ **Modo Libre:** Elegí las versiones que conforman tu curva de depreciación. Los gráficos superiores leen y analizan exactamente esta combinación.")
+st.subheader("Matriz de Exploración Anual (Precio Medio)")
+st.markdown("La matriz calcula automáticamente el **valor central representativo** del modelo para cada año, eliminando distorsiones y sesgos producidos por versiones extremas (ej. deportivas, full o entrada de gama).")
 
 col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([1, 4, 2, 2, 2])
 col_h1.markdown("**Año**")
-col_h2.markdown("**Versión**")
-col_h3.markdown(f"**Precio ({lbl})**")
+col_h2.markdown("**Versión Analizada**")
+col_h3.markdown(f"**Precio Medio ({lbl})**")
 col_h4.markdown(f"**Pérdida al año ant. ({lbl})**")
 col_h5.markdown("**Depreciación (%)**")
 st.markdown("---")
 
-# Renderizamos la matriz leyendo directamente del dataframe de gráficos para garantizar 100% consistencia
 if not df_graficos.empty:
-    for i, año in enumerate(años_disponibles):
-        opciones_año = df_filtrado[df_filtrado['Año'] == año]['Version'].unique()
-        datos_fila = df_graficos[df_graficos['Año'] == año].iloc[0]
-        
+    for i, row in df_graficos.iterrows():
         c1, c2, c3, c4, c5 = st.columns([1, 4, 2, 2, 2])
         
         with c1:
-            st.write(f"**{año}**")
+            st.write(f"**{int(row['Año'])}**")
             
         with c2:
-            st.selectbox(
-                "Versión", 
-                options=opciones_año, 
-                index=list(opciones_año).index(versiones_elegidas[año]),
-                label_visibility="collapsed", 
-                key=f"matriz_{año}"
-            )
+            st.write(row['Version'])
             
         with c3:
-            st.write(f"{signo} {datos_fila['Precio_Disp']:,.0f}")
+            st.write(f"{signo} {row['Precio_Disp']:,.0f}")
             
         with c4:
-            if pd.isna(datos_fila['Perdida_Disp']):
+            if pd.isna(row['Perdida_Disp']):
                 st.write("-")
             else:
-                st.write(f"{signo} {datos_fila['Perdida_Disp']:,.0f}")
+                st.write(f"{signo} {row['Perdida_Disp']:,.0f}")
                 
         with c5:
-            if pd.isna(datos_fila['Tasa_Depreciacion_Pct']):
+            if pd.isna(row['Tasa_Depreciacion_Pct']):
                 st.write("-")
             else:
-                st.write(f"{datos_fila['Tasa_Depreciacion_Pct']:.1f}%")
+                st.write(f"{row['Tasa_Depreciacion_Pct']:.1f}%")
                 
     st.markdown("---")
