@@ -101,6 +101,67 @@ df_filtrado['Tasa_Depreciacion_Pct'] = (df_filtrado['Perdida_Anual_USD'] / df_fi
 año_actual = 2025 # O el año base que estés tomando
 df_filtrado['Antigüedad'] = año_actual - df_filtrado['Año']
 
+# --- 5. CONSTRUCCIÓN DE LA CURVA SINTÉTICA (Controlada por la Matriz) ---
+años_disponibles = sorted(df_filtrado['Año'].unique(), reverse=True)
+
+# Leemos las versiones seleccionadas en la matriz
+versiones_elegidas = {}
+for año in años_disponibles:
+    key_select = f"matriz_{año}"
+    opciones_año = df_filtrado[df_filtrado['Año'] == año]['Version'].unique()
+    
+    # CORRECCIÓN CLAVE: Verificamos si la versión guardada en memoria pertenece al modelo actual
+    if key_select in st.session_state and st.session_state[key_select] in opciones_año:
+        versiones_elegidas[año] = st.session_state[key_select]
+    else:
+        # Si cambiamos de auto, se resetea a la primera opción disponible
+        versiones_elegidas[año] = opciones_año[0]
+
+# Armamos el dataframe dinámico uniendo las filas exactas elegidas
+filas_sinteticas = []
+for año in años_disponibles:
+    version_sel = versiones_elegidas[año]
+    fila = df_filtrado[(df_filtrado['Año'] == año) & (df_filtrado['Version'] == version_sel)].copy()
+    if not fila.empty:
+        filas_sinteticas.append(fila)
+
+if filas_sinteticas:
+    df_graficos = pd.concat(filas_sinteticas)
+else:
+    df_graficos = pd.DataFrame()
+
+# Calculamos la matemática cruzada (Depreciación y Pérdida) directamente sobre la selección
+if not df_graficos.empty:
+    df_graficos['Perdida_Disp'] = df_graficos['Precio_Disp'] - df_graficos['Precio_Disp'].shift(-1)
+    df_graficos['Perdida_Anual_USD'] = df_graficos['Perdida_Disp'] / factor_pantalla
+    df_graficos['Tasa_Depreciacion_Pct'] = (df_graficos['Perdida_Disp'] / df_graficos['Precio_Disp']) * 100
+
+    # Recalculamos el TCO de la curva sintética
+    df_graficos['TCO_Total_Anual'] = (
+        df_graficos['Perdida_Anual_USD'].fillna(0) + 
+        df_graficos['Costo_Patente_Anual'] +
+        df_graficos['Costo_Seguro_Anual'] + 
+        df_graficos['Uso_Regular_Anual'] + 
+        df_graficos['Costo_Mantenimiento_Pesado_Anual']
+    )
+
+# Buscador del mejor período sobre la curva sintética
+mejor_periodo = None
+min_dep_acumulada_pct = float('inf')
+
+if not df_graficos.empty:
+    for i, row in df_graficos.iterrows():
+        año_inicio = row['Año']
+        año_fin = año_inicio - 3
+        if año_fin in df_graficos['Año'].values:
+            precio_inicio = row['Precio_USD']
+            precio_fin = df_graficos[df_graficos['Año'] == año_fin]['Precio_USD'].values[0]
+            dep_pct = ((precio_inicio - precio_fin) / precio_inicio) * 100
+            if dep_pct < min_dep_acumulada_pct:
+                min_dep_acumulada_pct = dep_pct
+                mejor_periodo = (año_inicio, año_fin)
+
+
 # --- 6. VISUALIZACIONES PRINCIPALES ---
 col1, col2 = st.columns(2)
 
@@ -205,3 +266,58 @@ with col4:
         else:
             st.success("✅ Conviene comprar (TCO inferior).")
 
+# --- 8. ANEXO METODOLÓGICO Y MATRIZ DINÁMICA CRUZADA ---
+with st.expander("📚 Notas Metodológicas y Especificaciones de Flota"):
+    st.markdown(f"""
+    **Origen de los Datos:** Precios extraídos de **Autocosmos**.
+    **Conversión:** Dólar MEP extraído en vivo vía DolarAPI.
+    **Flota Top 20:** Hilux, Amarok, Ranger, Frontier, Corolla Cross, Tracker, Taos, Renegade, HR-V, 2008, Cronos, 208, Yaris, Polo, Corolla, Cruze, Sandero, GLC 300, Q5, X3, Kangoo, Gol, EcoSport.
+    """)
+
+st.subheader("Matriz de Exploración Anual Dinámica")
+st.markdown("⚠️ **Modo Libre:** Elegí las versiones que conforman tu curva de depreciación. Los gráficos superiores leen y analizan exactamente esta combinación.")
+
+col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([1, 4, 2, 2, 2])
+col_h1.markdown("**Año**")
+col_h2.markdown("**Versión**")
+col_h3.markdown(f"**Precio ({lbl})**")
+col_h4.markdown(f"**Pérdida al año ant. ({lbl})**")
+col_h5.markdown("**Depreciación (%)**")
+st.markdown("---")
+
+# Renderizamos la matriz leyendo directamente del dataframe de gráficos para garantizar 100% consistencia
+if not df_graficos.empty:
+    for i, año in enumerate(años_disponibles):
+        opciones_año = df_filtrado[df_filtrado['Año'] == año]['Version'].unique()
+        datos_fila = df_graficos[df_graficos['Año'] == año].iloc[0]
+        
+        c1, c2, c3, c4, c5 = st.columns([1, 4, 2, 2, 2])
+        
+        with c1:
+            st.write(f"**{año}**")
+            
+        with c2:
+            st.selectbox(
+                "Versión", 
+                options=opciones_año, 
+                index=list(opciones_año).index(versiones_elegidas[año]),
+                label_visibility="collapsed", 
+                key=f"matriz_{año}"
+            )
+            
+        with c3:
+            st.write(f"{signo} {datos_fila['Precio_Disp']:,.0f}")
+            
+        with c4:
+            if pd.isna(datos_fila['Perdida_Disp']):
+                st.write("-")
+            else:
+                st.write(f"{signo} {datos_fila['Perdida_Disp']:,.0f}")
+                
+        with c5:
+            if pd.isna(datos_fila['Tasa_Depreciacion_Pct']):
+                st.write("-")
+            else:
+                st.write(f"{datos_fila['Tasa_Depreciacion_Pct']:.1f}%")
+                
+    st.markdown("---")
