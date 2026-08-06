@@ -17,18 +17,16 @@ def load_data():
 df = load_data()
 
 # --- NUEVO: FUNCIÓN PARA TRAER EL DÓLAR EN VIVO ---
-@st.cache_data(ttl=3600) # Guarda el dato por 1 hora para no saturar la API
+@st.cache_data(ttl=3600)
 def obtener_dolar_mep():
     try:
         url = "https://dolarapi.com/v1/dolares/bolsa"
         respuesta = requests.get(url)
         if respuesta.status_code == 200:
             data = respuesta.json()
-            # Retornamos el valor de venta y solo la fecha sin la hora para que quede prolijo
             return float(data['venta']), data['fechaActualizacion'][:10]
     except Exception as e:
         pass
-    # Valor de contingencia por si se cae internet
     return 1250.0, "Sin conexión"
 
 precio_mep_vivo, fecha_mep = obtener_dolar_mep()
@@ -37,7 +35,6 @@ precio_mep_vivo, fecha_mep = obtener_dolar_mep()
 st.sidebar.header("0. Configuración de Moneda")
 moneda = st.sidebar.selectbox("Visualizar Dashboard en:", ["USD (Dólares)", "ARS (Pesos)"])
 
-# Usamos la variable en vivo como valor por defecto
 tipo_cambio = st.sidebar.number_input(
     "Cotización Dólar MEP (ARS):",
     value=precio_mep_vivo,
@@ -54,7 +51,7 @@ provincia = st.sidebar.selectbox("Provincia de Radicación:", ["Entre Ríos", "C
 st.sidebar.markdown("---")
 st.sidebar.header("2. Perfil de Uso y OPEX Frecuente")
 km_anuales = st.sidebar.slider("Kilómetros estimados por año:", min_value=5000, max_value=40000, value=15000, step=1000)
-precio_litro = st.sidebar.number_input("Precio Combustible (USD por Litro):", value=1.10, step=0.05, help="Para mantener la estabilidad del modelo frente a la inflación local, los inputs base se cargan en valor dólar.")
+precio_litro = st.sidebar.number_input("Precio Combustible (USD por Litro):", value=1.10, step=0.05)
 precio_service = st.sidebar.number_input("Costo de Service (cada 10k km en USD):", value=150, step=10)
 cochera_mensual = st.sidebar.number_input("Cochera Mensual (USD):", value=0, step=10)
 
@@ -68,7 +65,6 @@ st.sidebar.markdown("---")
 st.sidebar.header("3. Alternativa de Movilidad")
 precio_uber_km = st.sidebar.number_input("Precio estimado de Uber/Cabify (USD por Km):", value=0.45, step=0.05)
 
-
 # --- 3. CONFIGURACIÓN DINÁMICA DE ARQUITECTURA BIMONETARIA ---
 if moneda == "ARS (Pesos)":
     factor_pantalla = tipo_cambio
@@ -81,11 +77,8 @@ else:
 
 st.success(f"🏆 **Analizando Flota:** {modelo_elegido} - Vehículo de Referencia del Mercado")
 
-
-# --- 4. MOTOR DE CÁLCULO DINÁMICO ---
-# Ordenamos por Versión y luego por Año para aislar el cálculo matemático
+# --- 4. MOTOR DE CÁLCULO BASE ---
 df_filtrado = df[df['Modelo'] == modelo_elegido].sort_values(['Version', 'Año'], ascending=[True, False]).copy()
-
 df_filtrado['Precio_USD'] = df_filtrado['Precio'] / tipo_cambio
 
 def calcular_patente_dinamica(row, prov):
@@ -108,11 +101,6 @@ def calcular_patente_dinamica(row, prov):
 
 df_filtrado['Costo_Patente_Anual'] = df_filtrado.apply(lambda r: calcular_patente_dinamica(r, provincia), axis=1)
 df_filtrado['Costo_Seguro_Anual'] = df_filtrado['Precio_USD'] * 0.035
-
-# Cálculo aislado: diff(-1) restará solo contra el año anterior de la MISMA versión
-df_filtrado['Perdida_Anual_USD'] = df_filtrado.groupby('Version')['Precio_USD'].diff(periods=-1)
-df_filtrado['Tasa_Depreciacion_Pct'] = (df_filtrado['Perdida_Anual_USD'] / df_filtrado['Precio_USD']) * 100
-
 df_filtrado['Costo_Combustible_Anual'] = (km_anuales / 100) * 9 * precio_litro
 df_filtrado['Costo_Service_Anual'] = (km_anuales / 10000) * precio_service
 df_filtrado['Costo_Cochera_Anual'] = cochera_mensual * 12
@@ -124,31 +112,49 @@ df_filtrado['Costo_Service_Anual'] = df_filtrado['Costo_Service_Anual'] * df_fil
 df_filtrado['Costo_Mantenimiento_Pesado_Anual'] = df_filtrado['Costo_Mantenimiento_Pesado_Anual'] * df_filtrado['Multiplicador_Edad']
 df_filtrado['Uso_Regular_Anual'] = df_filtrado['Costo_Combustible_Anual'] + df_filtrado['Costo_Service_Anual'] + df_filtrado['Costo_Cochera_Anual']
 
-df_filtrado['TCO_Total_Anual'] = (
-    df_filtrado['Perdida_Anual_USD'].fillna(0) + df_filtrado['Costo_Patente_Anual'] +
-    df_filtrado['Costo_Seguro_Anual'] + df_filtrado['Uso_Regular_Anual'] + df_filtrado['Costo_Mantenimiento_Pesado_Anual']
-)
-
-# Columnas de despliegue
 df_filtrado['Precio_Disp'] = df_filtrado['Precio_USD'] * factor_pantalla
-df_filtrado['Perdida_Disp'] = df_filtrado['Perdida_Anual_USD'] * factor_pantalla
 df_filtrado['Patente_Disp'] = df_filtrado['Costo_Patente_Anual'] * factor_pantalla
 df_filtrado['Seguro_Disp'] = df_filtrado['Costo_Seguro_Anual'] * factor_pantalla
 df_filtrado['Uso_Disp'] = df_filtrado['Uso_Regular_Anual'] * factor_pantalla
 df_filtrado['Maint_Pesado_Disp'] = df_filtrado['Costo_Mantenimiento_Pesado_Anual'] * factor_pantalla
 
+# --- 5. CONSTRUCCIÓN DE LA CURVA SINTÉTICA (Controlada por la Matriz) ---
+años_disponibles = sorted(df_filtrado['Año'].unique(), reverse=True)
 
-# --- 5. FILTRO EXCLUSIVO PARA GRÁFICOS Y MEJOR PERÍODO ---
-# Obtenemos la versión más representativa para que el gráfico arranque por defecto
-version_default = df_filtrado['Version'].value_counts().idxmax()
+# Leemos las versiones seleccionadas en la matriz
+versiones_elegidas = {}
+for año in años_disponibles:
+    key_select = f"matriz_{año}"
+    opciones_año = df_filtrado[df_filtrado['Año'] == año]['Version'].unique()
+    if key_select in st.session_state:
+        versiones_elegidas[año] = st.session_state[key_select]
+    else:
+        versiones_elegidas[año] = opciones_año[0]
 
-st.markdown("---")
-version_graficos = st.selectbox("🎯 Versión para Visualización Gráfica:", df_filtrado['Version'].unique(), index=list(df_filtrado['Version'].unique()).index(version_default), help="Elegí la versión específica que querés ver en la curva de depreciación.")
+# Armamos el dataframe dinámico uniendo las filas exactas elegidas
+filas_sinteticas = []
+for año in años_disponibles:
+    version_sel = versiones_elegidas[año]
+    fila = df_filtrado[(df_filtrado['Año'] == año) & (df_filtrado['Version'] == version_sel)].copy()
+    filas_sinteticas.append(fila)
 
-# Aislamos los datos de esa única versión para limpiar el gráfico
-df_graficos = df_filtrado[df_filtrado['Version'] == version_graficos].copy()
+df_graficos = pd.concat(filas_sinteticas)
 
-# Buscador del mejor período
+# Calculamos la matemática cruzada (Depreciación y Pérdida) directamente sobre la selección
+df_graficos['Perdida_Disp'] = df_graficos['Precio_Disp'] - df_graficos['Precio_Disp'].shift(-1)
+df_graficos['Perdida_Anual_USD'] = df_graficos['Perdida_Disp'] / factor_pantalla
+df_graficos['Tasa_Depreciacion_Pct'] = (df_graficos['Perdida_Disp'] / df_graficos['Precio_Disp']) * 100
+
+# Recalculamos el TCO de la curva sintética
+df_graficos['TCO_Total_Anual'] = (
+    df_graficos['Perdida_Anual_USD'].fillna(0) + 
+    df_graficos['Costo_Patente_Anual'] +
+    df_graficos['Costo_Seguro_Anual'] + 
+    df_graficos['Uso_Regular_Anual'] + 
+    df_graficos['Costo_Mantenimiento_Pesado_Anual']
+)
+
+# Buscador del mejor período sobre la curva sintética
 mejor_periodo = None
 min_dep_acumulada_pct = float('inf')
 
@@ -163,38 +169,34 @@ for i, row in df_graficos.iterrows():
             min_dep_acumulada_pct = dep_pct
             mejor_periodo = (año_inicio, año_fin)
 
-
 # --- 6. VISUALIZACIONES PRINCIPALES ---
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Curva de Valor Patrimonial", help="Los precios representan los valores de referencia del mercado automotor para unidades usadas en estado estándar. Fuente base: Cámara del Comercio Automotor (CCA).")
-
+    st.subheader("Curva de Valor Patrimonial")
     fig1 = px.line(df_graficos, x='Año', y='Precio_Disp', markers=True, custom_data=['Perdida_Disp'])
     fig1.update_traces(
         line=dict(color='#1f77b4', width=3), marker=dict(size=8),
-        hovertemplate=f"<b>Año: %{{x}}</b><br>Precio: {signo} %{{y:,.0f}}<br>Pérdida próximo año: {signo} %{{customdata[0]:,.0f}}<extra></extra>"
+        hovertemplate=f"<b>Año: %{{x}}</b><br>Precio: {signo} %{{y:,.0f}}<br>Pérdida cruzada al año ant.: {signo} %{{customdata[0]:,.0f}}<extra></extra>"
     )
     fig1.update_layout(
         xaxis_title="<b>Año de Fabricación</b>", yaxis_title=f"<b>Precio ({lbl})</b>", font=dict(size=14),
         hovermode="x unified", 
-        # ACÁ ESTÁ LA MAGIA: type='category' elimina los años con decimales
-        xaxis=dict(autorange="reversed", showgrid=True, type='category'), 
+        xaxis=dict(autorange="reversed", showgrid=True, type='category'), # Soluciona el eje invertido y los decimales
         yaxis=dict(showgrid=True)
     )
     st.plotly_chart(fig1, use_container_width=True)
 
 with col2:
-    st.subheader("Análisis de Período de Retención", help="Mide la destrucción porcentual del capital inmovilizado.")
-
+    st.subheader("Análisis de Período de Retención")
     min_yr = int(df_graficos['Año'].min())
     max_yr = int(df_graficos['Año'].max())
     
     if min_yr == max_yr:
-        st.warning("⚠️ Esta versión solo tiene 1 año de registro. No se puede analizar el período de retención.")
+        st.warning("⚠️ Flota con 1 solo año de registro.")
     else:
         rango_max_posible = min(4, max_yr - min_yr)
-        rango_seleccionado = st.slider("Seleccioná el período de retención a analizar:", min_value=min_yr, max_value=max_yr, value=(max_yr - rango_max_posible, max_yr))
+        rango_seleccionado = st.slider("Período de retención a analizar:", min_value=min_yr, max_value=max_yr, value=(max_yr - rango_max_posible, max_yr))
         año_venta, año_compra = rango_seleccionado
         anios_retencion = año_compra - año_venta
 
@@ -228,19 +230,16 @@ with col2:
         fig2.update_layout(
             xaxis_title="<b>Año de Fabricación</b>", yaxis_title="<b>Depreciación Marginal (%)</b>",
             font=dict(size=14), 
-            # Acá también aseguramos que sea categoría
             xaxis=dict(autorange="reversed", type='category'),
             showlegend=False, height=250, margin=dict(t=30, b=0)
         )
         st.plotly_chart(fig2, use_container_width=True)
 
     if mejor_periodo:
-        st.success(f"🏆 **El mejor período histórico de 3 años:** Comprar modelo **{mejor_periodo[0]}** y retener hasta que alcance la antigüedad del **{mejor_periodo[1]}**. La pérdida total de capital es de solo **{min_dep_acumulada_pct:.1f}%**.")
-
+        st.success(f"🏆 **El mejor período histórico:** Comprar modelo **{mejor_periodo[0]}** y retener hasta el **{mejor_periodo[1]}**.")
 
 # --- 7. GRÁFICO APILADO (TCO) ---
-st.subheader(f"Estructura del TCO Anualizado", help="TCO (Total Cost of Ownership). Suma el CAPEX (Depreciación patrimonial) más el OPEX (Gastos operativos). El modelo asume un incremento compuesto del 5% anual en los costos de mantenimiento para penalizar la retención de activos envejecidos.")
-
+st.subheader(f"Estructura del TCO Anualizado")
 col3, col4 = st.columns([2, 1])
 
 with col3:
@@ -248,10 +247,10 @@ with col3:
     fig3 = go.Figure()
     
     if not df_marginal.empty:
-        fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Perdida_Disp'], name='Depreciación (CAPEX)', marker_color='#d62728', hovertemplate=f"<b>Depreciación:</b> {signo} %{{y:,.0f}}<extra></extra>"))
+        fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Perdida_Disp'], name='Depreciación', marker_color='#d62728', hovertemplate=f"<b>Depreciación:</b> {signo} %{{y:,.0f}}<extra></extra>"))
         fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Seguro_Disp'], name='Seguro', marker_color='#1f77b4', hovertemplate=f"<b>Seguro:</b> {signo} %{{y:,.0f}}<extra></extra>"))
         fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Patente_Disp'], name=f'Patente', marker_color='#2ca02c', hovertemplate=f"<b>Patente:</b> {signo} %{{y:,.0f}}<extra></extra>"))
-        fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Uso_Disp'], name='Nafta+Service+Cochera', marker_color='#9467bd', hovertemplate=f"<b>Uso Regular:</b> {signo} %{{y:,.0f}}<extra></extra>"))
+        fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Uso_Disp'], name='Uso Regular', marker_color='#9467bd', hovertemplate=f"<b>Uso Regular:</b> {signo} %{{y:,.0f}}<extra></extra>"))
         fig3.add_trace(go.Bar(x=df_marginal['Año'], y=df_marginal['Maint_Pesado_Disp'], name='Amort. Pesada', marker_color='#bcbd22', hovertemplate=f"<b>Mant. Pesado:</b> {signo} %{{y:,.0f}}<extra></extra>"))
 
         fig3.update_layout(
@@ -263,62 +262,40 @@ with col3:
 
 with col4:
     costo_uber_anual_disp = km_anuales * precio_uber_km * factor_pantalla
-    st.metric(label="📊 Alternativa Dinámica (Uber/Cabify)", value=f"{signo} {costo_uber_anual_disp:,.0f}", help="Costo de oportunidad calculado multiplicando la tarifa plana ingresada por los kilómetros anuales del usuario.")
+    st.metric(label="📊 Alternativa Dinámica (Uber/Cabify)", value=f"{signo} {costo_uber_anual_disp:,.0f}")
 
     if not df_marginal.empty:
         tco_promedio_auto_disp = df_marginal['TCO_Total_Anual'].mean() * factor_pantalla
-        st.metric(label="🚗 TCO Promedio Flota", value=f"{signo} {tco_promedio_auto_disp:,.0f}", help="Promedio del Costo Total Anual de todas las añadas disponibles de la versión analizada.")
+        st.metric(label="🚗 TCO Promedio Flota", value=f"{signo} {tco_promedio_auto_disp:,.0f}")
 
         if tco_promedio_auto_disp > costo_uber_anual_disp:
             st.error("❌ Conviene usar apps de movilidad para este kilometraje.")
         else:
             st.success("✅ Conviene comprar (TCO inferior).")
 
-
 # --- 8. ANEXO METODOLÓGICO Y MATRIZ DINÁMICA CRUZADA ---
-with st.expander("📚 Notas Metodológicas y Especificaciones de Flota (Leer antes de analizar)"):
+with st.expander("📚 Notas Metodológicas y Especificaciones de Flota"):
     st.markdown(f"""
-    **Origen de los Datos & Conversión Dinámica:**
-    Los precios base en pesos originales son extraídos y actualizados mensualmente de forma automática desde la guía oficial de **Autocosmos**.
-    Al seleccionar visualización en Dólares, el sistema realiza la conversión en tiempo real dividiendo el precio por la cotización del Dólar MEP extraída en vivo desde DolarAPI.
-
-    **Flota de Referencia Analizada (Top 20 Argentina):**
-    El modelo evalúa más de 2700 registros históricos correspondientes a los vehículos de mayor liquidez del mercado:
-    * **Pick-ups:** Toyota Hilux, VW Amarok, Ford Ranger, Nissan Frontier.
-    * **SUVs:** Corolla Cross, Tracker, Taos, Renegade, HR-V, 2008.
-    * **Pasajeros:** Cronos, 208, Yaris, Polo, Corolla, Cruze, Sandero.
-    * **Premium y Lujo:** Mercedes-Benz GLC 300, Audi Q5, BMW X3.
-    * **Utilitarios e Históricos:** Kangoo, VW Gol, EcoSport.
+    **Origen de los Datos:** Precios extraídos de **Autocosmos**.
+    **Conversión:** Dólar MEP extraído en vivo vía DolarAPI.
+    **Flota Top 20:** Hilux, Amarok, Ranger, Frontier, Corolla Cross, Tracker, Taos, Renegade, HR-V, 2008, Cronos, 208, Yaris, Polo, Corolla, Cruze, Sandero, GLC 300, Q5, X3, Kangoo, Gol, EcoSport.
     """)
 
 st.subheader("Matriz de Exploración Anual Dinámica")
-st.markdown("⚠️ **Modo Libre:** Evaluá la evolución financiera combinando distintas versiones. El sistema calculará la destrucción de valor restando el precio de la variante elegida en el año actual contra la variante seleccionada en el año anterior.")
+st.markdown("⚠️ **Modo Libre:** Elegí las versiones que conforman tu curva de depreciación. Los gráficos superiores leen y analizan exactamente esta combinación.")
 
-# 1. Armamos el encabezado de nuestra tabla fabricada a medida
 col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([1, 4, 2, 2, 2])
 col_h1.markdown("**Año**")
 col_h2.markdown("**Versión**")
 col_h3.markdown(f"**Precio ({lbl})**")
-col_h4.markdown(f"**Pérdida ({lbl})**")
+col_h4.markdown(f"**Pérdida al año ant. ({lbl})**")
 col_h5.markdown("**Depreciación (%)**")
 st.markdown("---")
 
-años_disponibles = sorted(df_filtrado['Año'].unique(), reverse=True)
-
-# 2. Leemos la memoria de Streamlit para saber qué eligió el usuario en todos los años antes de calcular
-versiones_elegidas = {}
-for año in años_disponibles:
-    key_select = f"matriz_{año}"
-    opciones_año = df_filtrado[df_filtrado['Año'] == año]['Version'].unique()
-    if key_select in st.session_state:
-        versiones_elegidas[año] = st.session_state[key_select]
-    else:
-        versiones_elegidas[año] = opciones_año[0]
-
-# 3. Bucle de renderizado y cálculo cruzado
+# Renderizamos la matriz leyendo directamente del dataframe de gráficos para garantizar 100% consistencia
 for i, año in enumerate(años_disponibles):
-    df_año = df_filtrado[df_filtrado['Año'] == año]
-    versiones_año = df_año['Version'].unique()
+    opciones_año = df_filtrado[df_filtrado['Año'] == año]['Version'].unique()
+    datos_fila = df_graficos[df_graficos['Año'] == año].iloc[0]
     
     c1, c2, c3, c4, c5 = st.columns([1, 4, 2, 2, 2])
     
@@ -326,43 +303,27 @@ for i, año in enumerate(años_disponibles):
         st.write(f"**{año}**")
         
     with c2:
-        # Usamos una key única ('matriz_2025') para que no interfiera con el gráfico superior
-        version_elegida = st.selectbox(
+        st.selectbox(
             "Versión", 
-            options=versiones_año, 
+            options=opciones_año, 
+            index=list(opciones_año).index(versiones_elegidas[año]),
             label_visibility="collapsed", 
             key=f"matriz_{año}"
         )
-        versiones_elegidas[año] = version_elegida
         
-    # Extraemos el precio del año actual seleccionado
-    datos_fila = df_año[df_año['Version'] == version_elegida].iloc[0]
-    precio_actual = datos_fila['Precio_Disp']
-    
     with c3:
-        st.write(f"{signo} {precio_actual:,.0f}")
+        st.write(f"{signo} {datos_fila['Precio_Disp']:,.0f}")
         
     with c4:
-        # Verificamos si existe un año más viejo en la base para restarle
-        if i + 1 < len(años_disponibles):
-            año_anterior = años_disponibles[i+1]
-            version_anterior = versiones_elegidas[año_anterior]
-            
-            # Buscamos el precio de la versión elegida en ese año anterior
-            datos_ant = df_filtrado[(df_filtrado['Año'] == año_anterior) & (df_filtrado['Version'] == version_anterior)].iloc[0]
-            precio_ant = datos_ant['Precio_Disp']
-            
-            # MATEMÁTICA CRUZADA DINÁMICA
-            perdida_cruzada = precio_actual - precio_ant
-            tasa_cruzada = (perdida_cruzada / precio_actual) * 100
-            
-            st.write(f"{signo} {perdida_cruzada:,.0f}")
-            with c5:
-                st.write(f"{tasa_cruzada:.1f}%")
-        else:
-            # Fin de la serie temporal
+        if pd.isna(datos_fila['Perdida_Disp']):
             st.write("-")
-            with c5:
-                st.write("-")
-                
+        else:
+            st.write(f"{signo} {datos_fila['Perdida_Disp']:,.0f}")
+            
+    with c5:
+        if pd.isna(datos_fila['Tasa_Depreciacion_Pct']):
+            st.write("-")
+        else:
+            st.write(f"{datos_fila['Tasa_Depreciacion_Pct']:.1f}%")
+            
 st.markdown("---")
