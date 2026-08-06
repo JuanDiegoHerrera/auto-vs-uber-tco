@@ -250,7 +250,7 @@ with col4:
 
 st.markdown("---")
 
-# --- 8. ANEXO METODOLÓGICO Y TABLA ---
+# --- 8. ANEXO METODOLÓGICO Y TABLA DINÁMICA DE VERSIONES ---
 with st.expander("📚 Notas Metodológicas y Especificaciones de Flota (Leer antes de analizar)"):
     st.markdown(f"""
     **Origen de los Datos & Conversión Dinámica:**
@@ -265,13 +265,26 @@ with st.expander("📚 Notas Metodológicas y Especificaciones de Flota (Leer an
     * **Premium y Lujo:** Mercedes-Benz GLC 300, Audi Q5, BMW X3.
     * **Utilitarios e Históricos:** Kangoo, VW Gol, EcoSport.
     """)
-df_tabla = df_filtrado.copy()
-df_tabla['TCO_Total_Disp'] = df_tabla['TCO_Total_Anual'] * factor_pantalla
 
-st.subheader("Matriz de Datos Crudos")
-st.dataframe(df_tabla[['Año', 'Version', 'TCO_Total_Disp', 'Precio_Disp', 'Perdida_Disp', 'Tasa_Depreciacion_Pct']].rename(columns={
+st.subheader("Matriz de Datos Crudos y Selector de Versiones")
+
+# 1. Obtenemos todas las versiones únicas disponibles para el modelo seleccionado en todo el historial
+todas_las_versiones = df[df['Modelo'] == modelo_elegido]['Version'].unique()
+
+# 2. Creamos un selectbox para que el usuario elija qué versión quiere inspeccionar en detalle en la tabla
+version_tabla_elegida = st.selectbox("Seleccioná la versión específica para auditar en la tabla:", todas_las_versiones)
+
+# 3. Filtramos exclusivamente por esa versión, garantizando una única fila prolija por año
+df_tabla_usuario = df[(df['Modelo'] == modelo_elegido) & (df['Version'] == version_tabla_elegida)].sort_values('Año', ascending=False).copy()
+
+# 4. Calculamos las conversiones de pantalla
+df_tabla_usuario['TCO_Total_Disp'] = df_tabla_usuario['TCO_Total_Anual'] * factor_pantalla
+df_tabla_usuario['Precio_Disp'] = df_tabla_usuario['Precio_USD'] * factor_pantalla
+df_tabla_usuario['Perdida_Disp'] = df_tabla_usuario['Perdida_Anual_USD'] * factor_pantalla
+
+st.dataframe(df_tabla_usuario[['Año', 'Version', 'TCO_Total_Disp', 'Precio_Disp', 'Perdida_Disp', 'Tasa_Depreciacion_Pct']].rename(columns={
     'TCO_Total_Disp': f'TCO Total Anual ({lbl})',
     'Precio_Disp': f'Precio ({lbl})',
     'Perdida_Disp': f'Pérdida Anual ({lbl})',
     'Tasa_Depreciacion_Pct': 'Depreciación Marginal (%)'
-}))
+}), use_container_width=True)
