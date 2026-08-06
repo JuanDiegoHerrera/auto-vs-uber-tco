@@ -126,9 +126,12 @@ versiones_elegidas = {}
 for año in años_disponibles:
     key_select = f"matriz_{año}"
     opciones_año = df_filtrado[df_filtrado['Año'] == año]['Version'].unique()
-    if key_select in st.session_state:
+    
+    # CORRECCIÓN CLAVE: Verificamos si la versión guardada en memoria pertenece al modelo actual
+    if key_select in st.session_state and st.session_state[key_select] in opciones_año:
         versiones_elegidas[año] = st.session_state[key_select]
     else:
+        # Si cambiamos de auto, se resetea a la primera opción disponible
         versiones_elegidas[año] = opciones_año[0]
 
 # Armamos el dataframe dinámico uniendo las filas exactas elegidas
@@ -136,38 +139,44 @@ filas_sinteticas = []
 for año in años_disponibles:
     version_sel = versiones_elegidas[año]
     fila = df_filtrado[(df_filtrado['Año'] == año) & (df_filtrado['Version'] == version_sel)].copy()
-    filas_sinteticas.append(fila)
+    if not fila.empty:
+        filas_sinteticas.append(fila)
 
-df_graficos = pd.concat(filas_sinteticas)
+if filas_sinteticas:
+    df_graficos = pd.concat(filas_sinteticas)
+else:
+    df_graficos = pd.DataFrame()
 
 # Calculamos la matemática cruzada (Depreciación y Pérdida) directamente sobre la selección
-df_graficos['Perdida_Disp'] = df_graficos['Precio_Disp'] - df_graficos['Precio_Disp'].shift(-1)
-df_graficos['Perdida_Anual_USD'] = df_graficos['Perdida_Disp'] / factor_pantalla
-df_graficos['Tasa_Depreciacion_Pct'] = (df_graficos['Perdida_Disp'] / df_graficos['Precio_Disp']) * 100
+if not df_graficos.empty:
+    df_graficos['Perdida_Disp'] = df_graficos['Precio_Disp'] - df_graficos['Precio_Disp'].shift(-1)
+    df_graficos['Perdida_Anual_USD'] = df_graficos['Perdida_Disp'] / factor_pantalla
+    df_graficos['Tasa_Depreciacion_Pct'] = (df_graficos['Perdida_Disp'] / df_graficos['Precio_Disp']) * 100
 
-# Recalculamos el TCO de la curva sintética
-df_graficos['TCO_Total_Anual'] = (
-    df_graficos['Perdida_Anual_USD'].fillna(0) + 
-    df_graficos['Costo_Patente_Anual'] +
-    df_graficos['Costo_Seguro_Anual'] + 
-    df_graficos['Uso_Regular_Anual'] + 
-    df_graficos['Costo_Mantenimiento_Pesado_Anual']
-)
+    # Recalculamos el TCO de la curva sintética
+    df_graficos['TCO_Total_Anual'] = (
+        df_graficos['Perdida_Anual_USD'].fillna(0) + 
+        df_graficos['Costo_Patente_Anual'] +
+        df_graficos['Costo_Seguro_Anual'] + 
+        df_graficos['Uso_Regular_Anual'] + 
+        df_graficos['Costo_Mantenimiento_Pesado_Anual']
+    )
 
 # Buscador del mejor período sobre la curva sintética
 mejor_periodo = None
 min_dep_acumulada_pct = float('inf')
 
-for i, row in df_graficos.iterrows():
-    año_inicio = row['Año']
-    año_fin = año_inicio - 3
-    if año_fin in df_graficos['Año'].values:
-        precio_inicio = row['Precio_USD']
-        precio_fin = df_graficos[df_graficos['Año'] == año_fin]['Precio_USD'].values[0]
-        dep_pct = ((precio_inicio - precio_fin) / precio_inicio) * 100
-        if dep_pct < min_dep_acumulada_pct:
-            min_dep_acumulada_pct = dep_pct
-            mejor_periodo = (año_inicio, año_fin)
+if not df_graficos.empty:
+    for i, row in df_graficos.iterrows():
+        año_inicio = row['Año']
+        año_fin = año_inicio - 3
+        if año_fin in df_graficos['Año'].values:
+            precio_inicio = row['Precio_USD']
+            precio_fin = df_graficos[df_graficos['Año'] == año_fin]['Precio_USD'].values[0]
+            dep_pct = ((precio_inicio - precio_fin) / precio_inicio) * 100
+            if dep_pct < min_dep_acumulada_pct:
+                min_dep_acumulada_pct = dep_pct
+                mejor_periodo = (año_inicio, año_fin)
 
 # --- 6. VISUALIZACIONES PRINCIPALES ---
 col1, col2 = st.columns(2)
