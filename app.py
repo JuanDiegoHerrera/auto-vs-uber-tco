@@ -77,29 +77,46 @@ else:
 
 st.success(f"🏆 **Analizando Flota:** {modelo_elegido} - Vehículo de Referencia del Mercado")
 
-# --- 4. MOTOR DE CÁLCULO BASE (ENFOQUE DE MEDIANA DE MERCADO) ---
-# 1. Filtramos solo el modelo que eligió el usuario
-df_modelo = df[df['Modelo'] == modelo_elegido].copy()
-
-# 2. LA MAGIA ESTADÍSTICA: Agrupamos por año y sacamos la mediana del precio original
-df_filtrado = df_modelo.groupby('Año')['Precio'].median().reset_index()
-
-# 3. Ordenamos cronológicamente (del más nuevo al más viejo)
-df_filtrado = df_filtrado.sort_values('Año', ascending=False).reset_index(drop=True)
-
-# 4. Asignamos un nombre genérico a la versión para que la tabla y funciones de abajo no rompan
-df_filtrado['Version'] = f"{modelo_elegido} (Precio Medio de Mercado)"
-
-# 5. Calculamos el valor en dólares
+# --- 4. MOTOR DE CÁLCULO BASE (RESTAURADO) ---
+df_filtrado = df[df['Modelo'] == modelo_elegido].sort_values(['Version', 'Año'], ascending=[True, False]).copy()
 df_filtrado['Precio_USD'] = df_filtrado['Precio'] / tipo_cambio
 
-# 6. Como ahora hay una sola fila por año, la pérdida es simplemente restar contra la fila de abajo
-df_filtrado['Perdida_Anual_USD'] = df_filtrado['Precio_USD'] - df_filtrado['Precio_USD'].shift(-1)
-df_filtrado['Tasa_Depreciacion_Pct'] = (df_filtrado['Perdida_Anual_USD'] / df_filtrado['Precio_USD']) * 100
+def calcular_patente_dinamica(row, prov):
+    precio = row['Precio_USD']
+    antiguedad = row['Antigüedad']
+    version = str(row['Version']).upper()
+    if antiguedad >= 15: return 0
+    es_hibrido = any(kw in version for kw in ['HEV', 'HYBRID', 'HIBRIDO', 'EQ', 'MHEV'])
+    if prov == "Entre Ríos":
+        alicuota = 0.025
+        if es_hibrido:
+            if antiguedad == 0: return 0
+            elif antiguedad == 1: return precio * alicuota * 0.50
+            elif antiguedad == 2: return precio * alicuota * 0.80
+        return precio * alicuota
+    elif prov == "CABA": return 0 if es_hibrido else (precio * 0.040)
+    elif prov == "Buenos Aires": return precio * 0.045
+    elif prov == "Santa Fe": return 0 if es_hibrido else (precio * 0.020)
+    else: return precio * 0.022
 
-# 7. Para el cálculo de patente y mantenimiento, necesitamos recrear la columna de Antigüedad
-año_actual = 2025 # O el año base que estés tomando
-df_filtrado['Antigüedad'] = año_actual - df_filtrado['Año']
+df_filtrado['Costo_Patente_Anual'] = df_filtrado.apply(lambda r: calcular_patente_dinamica(r, provincia), axis=1)
+df_filtrado['Costo_Seguro_Anual'] = df_filtrado['Precio_USD'] * 0.035
+df_filtrado['Costo_Combustible_Anual'] = (km_anuales / 100) * 9 * precio_litro
+df_filtrado['Costo_Service_Anual'] = (km_anuales / 10000) * precio_service
+df_filtrado['Costo_Cochera_Anual'] = cochera_mensual * 12
+df_filtrado['Costo_Mantenimiento_Pesado_Anual'] = km_anuales * ((costo_cubiertas + costo_distribucion + costo_amortiguadores) / 60000 + costo_tren_delantero / 100000)
+
+tasa_desgaste = 0.05
+df_filtrado['Multiplicador_Edad'] = (1 + tasa_desgaste) ** df_filtrado['Antigüedad']
+df_filtrado['Costo_Service_Anual'] = df_filtrado['Costo_Service_Anual'] * df_filtrado['Multiplicador_Edad']
+df_filtrado['Costo_Mantenimiento_Pesado_Anual'] = df_filtrado['Costo_Mantenimiento_Pesado_Anual'] * df_filtrado['Multiplicador_Edad']
+df_filtrado['Uso_Regular_Anual'] = df_filtrado['Costo_Combustible_Anual'] + df_filtrado['Costo_Service_Anual'] + df_filtrado['Costo_Cochera_Anual']
+
+df_filtrado['Precio_Disp'] = df_filtrado['Precio_USD'] * factor_pantalla
+df_filtrado['Patente_Disp'] = df_filtrado['Costo_Patente_Anual'] * factor_pantalla
+df_filtrado['Seguro_Disp'] = df_filtrado['Costo_Seguro_Anual'] * factor_pantalla
+df_filtrado['Uso_Disp'] = df_filtrado['Uso_Regular_Anual'] * factor_pantalla
+df_filtrado['Maint_Pesado_Disp'] = df_filtrado['Costo_Mantenimiento_Pesado_Anual'] * factor_pantalla
 
 # --- 5. CONSTRUCCIÓN DE LA CURVA SINTÉTICA (Controlada por la Matriz) ---
 años_disponibles = sorted(df_filtrado['Año'].unique(), reverse=True)
