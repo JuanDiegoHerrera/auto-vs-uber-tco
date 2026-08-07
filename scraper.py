@@ -113,11 +113,24 @@ print("\n🛠️ Consolidando la base de datos maestra...")
 if len(lista_dataframes_totales) > 0:
     df_final = pd.concat(lista_dataframes_totales, ignore_index=True)
     
-    # Exportación al archivo exacto que lee Streamlit
+    # NUEVO: Marcamos de qué mes es esta foto del mercado
+    mes_actual = datetime.datetime.now().strftime("%Y-%m")
+    df_final['Periodo_Extraccion'] = mes_actual
+    
+    # NUEVO: Creamos una carpeta para los históricos si no existe
+    if not os.path.exists('historico'):
+        os.makedirs('historico')
+        
+    # Guardamos el registro histórico del mes (Ej: historico/base_2026-08.csv)
+    nombre_historico = f"historico/base_{mes_actual}.csv"
+    df_final.to_csv(nombre_historico, index=False, encoding='utf-8-sig')
+    
+    # Sobreescribimos el archivo principal para que Streamlit se actualice
     nombre_archivo = "base_lista_para_streamlit.csv"
     df_final.to_csv(nombre_archivo, index=False, encoding='utf-8-sig')
     
     print(f"\n🎉 ¡ÉXITO! Base actualizada con {len(df_final)} registros.")
-    print(f"💾 Guardado como '{nombre_archivo}'. El dashboard se actualizará automáticamente.")
+    print(f"💾 Foto histórica guardada en: '{nombre_historico}'.")
+    print(f"💾 Dashboard actualizado en: '{nombre_archivo}'.")
 else:
     print("\n🚨 Error Crítico: No se logró recolectar ningún dato. Revisar conexión o selectores HTML.")
